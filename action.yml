@@ -41,37 +41,39 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - run: |
-        semgrep ${{ inputs.subcommand }} \
-          --json \
-          --output /tmp/semgrep.json \
-          ${{ inputs.config != '' && format('--config {0}', inputs.config) || '' }} \
-          ${{ inputs.extra_args }} \
-          ${{ inputs.paths }}
+    - name: Run Semgrep
+      uses: docker://semgrep/semgrep:latest
+      with:
+        args: |
+          bash -c '
 
-        # Stream process the JSONs
-        jq -c . /tmp/semgrep.json | \
-        jq --arg repo "${{ github.repository }}" \
-           --arg sha "${{ github.sha }}" \
-           --arg ref "${{ github.ref }}" \
-           --arg run_id "${{ github.run_id }}" \
-           --arg run_number "${{ github.run_number }}" \
-           --arg github_url "${{ github.server_url }}/${{ github.repository }}" \
-           --arg github_run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-           --arg source "$SOURCE" \
-           '. + {
-             repo: $repo,
-             sha: $sha,
-             ref: $ref,
-             run_id: $run_id,
-             run_number: $run_number,
-             github_url: $github_url,
-             github_run_url: $github_run_url,
-             source: $source
-           }' > semgrep-results.json
-      shell: bash
-      container:
-        image: semgrep/semgrep
+          semgrep ${{ inputs.subcommand }} \
+            --json \
+            --output /tmp/semgrep.json \
+            ${{ inputs.config != '' && format('--config {0}', inputs.config) || '' }} \
+            ${{ inputs.extra_args }} \
+            ${{ inputs.paths }}
+
+          # Stream process the JSONs
+          jq -c . /tmp/semgrep.json | \
+          jq --arg repo "${{ github.repository }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg ref "${{ github.ref }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg run_number "${{ github.run_number }}" \
+            --arg github_url "${{ github.server_url }}/${{ github.repository }}" \
+            --arg github_run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg source "$SOURCE" \
+            '. + {
+              repo: $repo,
+              sha: $sha,
+              ref: $ref,
+              run_id: $run_id,
+              run_number: $run_number,
+              github_url: $github_url,
+              github_run_url: $github_run_url,
+              source: $source
+            }' > semgrep-results.json
         
     - name: Push report to CSPM panel
       run: |
