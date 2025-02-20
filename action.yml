@@ -71,52 +71,26 @@ runs:
       shell: bash
       run: |
         JSON_FILE="results.json"
-        TEMP_JSON_FILE="/tmp/semgrep_output_updated.json"
         
-        cp "$JSON_FILE" "$TEMP_JSON_FILE"
-        
-        # Debug: Show initial content
-        echo "Initial results structure:"
-        jq -c '.results[] | {path, start, end, extra}' "$JSON_FILE"
-        
-        jq -c '.results[]? | {index: range(0, length), path, start, end}' "$JSON_FILE" | \
-        while IFS= read -r result; do
-          index=$(echo "$result" | jq -r '.index')
-          file_path=$(echo "$result" | jq -r '.path')
-          start_line=$(echo "$result" | jq -r '.start.line')
-          end_line=$(echo "$result" | jq -r '.end.line')
-          
-          echo "Processing file: $file_path (Lines: $start_line-$end_line)"
-          
-          if [ -f "$file_path" ]; then
-            echo "File exists, extracting lines..."
-            code_snippet=$(sed -n "${start_line},${end_line}p" "$file_path" | jq -R -s .)
-            echo "Extracted snippet: $code_snippet"
-            
-            # Debug: Show the update we're trying to make
-            echo "Updating index $index with snippet"
-            
-            # Update JSON with the extracted code
-            jq --argjson index "$index" \
-               --arg code "$code_snippet" \
-               '(.results[$index].extra.lines) = $code' \
-               "$TEMP_JSON_FILE" > temp.json
-               
-            # Debug: Verify the update worked
-            echo "Checking if update succeeded for index $index:"
-            jq -c ".results[$index].extra.lines" temp.json
-            
-            mv temp.json "$TEMP_JSON_FILE"
-          else
-            echo "Warning: File $file_path not found!"
+        # Create a jq filter that will process all results at once
+        jq -r '.results | to_entries[] | "\(.key) \(.value.path) \(.value.start.line) \(.value.end.line)"' "$JSON_FILE" | \
+        while IFS=' ' read -r index path start_line end_line; do
+          if [ -f "$path" ]; then
+            # Extract the snippet and escape it for jq
+            snippet=$(sed -n "${start_line},${end_line}p" "$path" | jq -R -s .)
+            # Store in associative array using a delimiter unlikely to appear in code
+            echo "$index"$'\x1e'"$snippet"
           fi
-        done
-        
-        # Debug: Show final structure
-        echo "Final results structure:"
-        jq -c '.results[] | {path, start, end, extra}' "$TEMP_JSON_FILE"
-        
-        mv "$TEMP_JSON_FILE" "$JSON_FILE"
+        done | \
+        # Combine all updates into a single jq program
+        jq -R -s '
+          split("\n") | 
+          map(select(length > 0) | split("\u001e")) | 
+          reduce .[] as [$idx, $code] (
+            (input | fromjson); 
+            setpath(["results", ($idx | tonumber), "extra", "lines"]; $code)
+          )
+        ' "$JSON_FILE" > updated.json && mv updated.json "$JSON_FILE"
 
 outputs:
   results-file:
