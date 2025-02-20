@@ -71,26 +71,37 @@ runs:
       shell: bash
       run: |
         JSON_FILE="results.json"
+        TEMP_JSON_FILE="/tmp/semgrep_output_updated.json"
         
-        # Create a jq filter that will process all results at once
-        jq -r '.results | to_entries[] | "\(.key) \(.value.path) \(.value.start.line) \(.value.end.line)"' "$JSON_FILE" | \
-        while IFS=' ' read -r index path start_line end_line; do
-          if [ -f "$path" ]; then
-            # Extract the snippet and escape it for jq
-            snippet=$(sed -n "${start_line},${end_line}p" "$path" | jq -R -s .)
-            # Store in associative array using a delimiter unlikely to appear in code
-            echo "$index"$'\x1e'"$snippet"
+        # Make a copy to work with
+        cp "$JSON_FILE" "$TEMP_JSON_FILE"
+        
+        # Get total results count
+        COUNT=$(jq '.results | length' "$JSON_FILE")
+        
+        # Process each result
+        for ((i=0; i<$COUNT; i++)); do
+          file_path=$(jq -r ".results[$i].path" "$JSON_FILE")
+          start_line=$(jq -r ".results[$i].start.line" "$JSON_FILE")
+          end_line=$(jq -r ".results[$i].end.line" "$JSON_FILE")
+          
+          echo "Processing file: $file_path (Lines: $start_line-$end_line)"
+          
+          if [ -f "$file_path" ]; then
+            # Extract the snippet and properly escape it for JSON
+            snippet=$(sed -n "${start_line},${end_line}p" "$file_path" | jq -Rs .)
+            
+            # Update the JSON using a simpler jq filter
+            jq --argjson idx "$i" --arg code "$snippet" \
+              '.results[$idx].extra.lines = ($code | fromjson)' \
+              "$TEMP_JSON_FILE" > temp.json && mv temp.json "$TEMP_JSON_FILE"
+          else
+            echo "Warning: File $file_path not found!"
           fi
-        done | \
-        # Combine all updates into a single jq program
-        jq -R -s '
-          split("\n") | 
-          map(select(length > 0) | split("\u001e")) | 
-          reduce .[] as [$idx, $code] (
-            (input | fromjson); 
-            setpath(["results", ($idx | tonumber), "extra", "lines"]; $code)
-          )
-        ' "$JSON_FILE" > updated.json && mv updated.json "$JSON_FILE"
+        done
+        
+        # Replace original with updated file
+        mv "$TEMP_JSON_FILE" "$JSON_FILE"
 
 outputs:
   results-file:
