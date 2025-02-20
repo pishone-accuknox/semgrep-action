@@ -55,19 +55,50 @@ runs:
           --arg ref "${{ github.ref }}" \
           --arg run_id "${{ github.run_id }}" \
           --arg run_number "${{ github.run_number }}" \
-          --arg github_url "${{ github.server_url }}/${{ github.repository }}" \
-          --arg github_run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-          --arg source "$SOURCE" \
+          --arg repo_url "${{ github.server_url }}/${{ github.repository }}" \
+          --arg repo_run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
           '. + {
             repo: $repo,
             sha: $sha,
             ref: $ref,
             run_id: $run_id,
             run_number: $run_number,
-            github_url: $github_url,
-            github_run_url: $github_run_url,
-            source: $source
+            repo_url: $repo_url,
+            repo_run_url: $repo_run_url,
           }' > results.json
+
+    - name: Extract Code Snippets
+      shell: bash
+      run: |
+        JSON_FILE="results.json"
+        TEMP_JSON_FILE="/tmp/semgrep_output_updated.json"
+        
+        cp "$JSON_FILE" "$TEMP_JSON_FILE"
+        
+        # Process results in a single jq call to improve performance
+        jq -c '.results[]? | {index: range(0, length), path, start, end}' "$JSON_FILE" | \
+        while IFS= read -r result; do
+          index=$(echo "$result" | jq -r '.index')
+          file_path=$(echo "$result" | jq -r '.path')
+          start_line=$(echo "$result" | jq -r '.start.line')
+          end_line=$(echo "$result" | jq -r '.end.line')
+          
+          echo "Processing file: $file_path (Lines: $start_line-$end_line)"
+          
+          if [ -f "$file_path" ]; then
+            code_snippet=$(sed -n "${start_line},${end_line}p" "$file_path" | jq -R -s .)
+            
+            # Update JSON with the extracted code
+            jq --argjson index "$index" \
+               --arg code "$code_snippet" \
+               '(.results[$index].extra.lines) = $code' \
+               "$TEMP_JSON_FILE" > temp.json && mv temp.json "$TEMP_JSON_FILE"
+          else
+            echo "Warning: File $file_path not found!"
+          fi
+        done
+        
+        mv "$TEMP_JSON_FILE" "$JSON_FILE"
 
     - name: Push report to CSPM panel
       shell: bash
