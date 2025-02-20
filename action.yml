@@ -75,26 +75,27 @@ runs:
         
         cp "$JSON_FILE" "$TEMP_JSON_FILE"
         
-        # Process results in a single jq call to improve performance
-        jq -c '.results[]? | {index: range(0, length), path, start, end}' "$JSON_FILE" | \
-        while IFS= read -r result; do
-          index=$(echo "$result" | jq -r '.index')
-          file_path=$(echo "$result" | jq -r '.path')
-          start_line=$(echo "$result" | jq -r '.start.line')
-          end_line=$(echo "$result" | jq -r '.end.line')
-          
-          echo "Processing file: $file_path (Lines: $start_line-$end_line)"
-          
-          if [ -f "$file_path" ]; then
-            code_snippet=$(sed -n "${start_line},${end_line}p" "$file_path" | jq -R -s .)
-            
+        # Get number of results
+        RESULTS_COUNT=$(jq '.results | length' "$JSON_FILE")
+        
+        # Loop using seq (POSIX-compatible)
+        for i in $(seq 0 $(($RESULTS_COUNT - 1))); do
+          FILE_PATH=$(jq -r ".results[$i].path" "$JSON_FILE")
+          START_LINE=$(jq -r ".results[$i].start.line" "$JSON_FILE")
+          END_LINE=$(jq -r ".results[$i].end.line" "$JSON_FILE")
+        
+          echo "Processing file: $FILE_PATH (Lines: $START_LINE-$END_LINE)"
+        
+          if [ -f "$FILE_PATH" ]; then
+            # Extract the affected code snippet
+            CODE_SNIPPET=$(sed -n "${START_LINE},${END_LINE}p" "$FILE_PATH" | jq -R -s .)
+        
             # Update JSON with the extracted code
-            jq --argjson index "$index" \
-               --arg code "$code_snippet" \
-               '(.results[$index].extra.lines) = $code' \
-               "$TEMP_JSON_FILE" > temp.json && mv temp.json "$TEMP_JSON_FILE"
+            jq --argjson index "$i" --arg code "$CODE_SNIPPET" \
+              '(.results[$index].extra.lines) = $code' \
+              "$TEMP_JSON_FILE" > temp.json && mv temp.json "$TEMP_JSON_FILE"
           else
-            echo "Warning: File $file_path not found!"
+            echo "Warning: File $FILE_PATH not found!"
           fi
         done
         
